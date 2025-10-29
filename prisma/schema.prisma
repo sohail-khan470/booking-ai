@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model StaffSchedule {
+  scheduleId  Int       @id @default(autoincrement())
+  staffId     Int
+  dayOfWeek   DayOfWeek
+  startTime   DateTime
+  endTime     DateTime
+  isAvailable Boolean   @default(true)
+  staff       Staff     @relation(fields: [staffId], references: [staffId], onDelete: Cascade)
+
+  @@index([staffId, dayOfWeek])
+}
+
+model Customer {
+  customerId   Int           @id @default(autoincrement())
+  name         String
+  phoneNumber  String?       @unique
+  email        String?       @unique
+  appointments Appointment[]
+}
+
+model Staff {
+  staffId      Int             @id @default(autoincrement())
+  name         String
+  role         String?
+  schedules    StaffSchedule[]
+  appointments Appointment[]
+
+  Slot Slot[]
+}
+
+model Appointment {
+  appointmentId   Int       @id @default(autoincrement())
+  customerId      Int
+  serviceId       Int
+  staffId         Int
+  appointmentDate DateTime
+  status          Status    @default(PENDING)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  customer        Customer  @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  service         Service   @relation(fields: [serviceId], references: [serviceId], onDelete: Cascade)
+  staff           Staff     @relation(fields: [staffId], references: [staffId], onDelete: Cascade)
+  CallLog         CallLog[]
+
+  @@index([appointmentDate])
+}
+
+model Service {
+  serviceId    Int           @id @default(autoincrement())
+  serviceName  String        @db.VarChar(100)
+  description  String?       @db.Text
+  duration     Int
+  price        Float
+  createdAt    DateTime      @default(now())
+  appointments Appointment[]
+}
+
+model Slot {
+  slotId    Int      @id @default(autoincrement())
+  staffId   Int
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+  isBooked  Boolean  @default(false)
+  staff     Staff    @relation(fields: [staffId], references: [staffId])
+}
+
+model CallLog {
+  callLogId     Int      @id @default(autoincrement())
+  callId        String   @unique
+  phoneNumber   String?
+  transcript    String?
+  status        String
+  appointmentId Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  appointment Appointment? @relation(fields: [appointmentId], references: [appointmentId], onDelete: Cascade)
+
+  @@index([phoneNumber])
+  @@index([callId])
+}
+
+enum DayOfWeek {
+  Monday
+  Tuesday
+  Wednesday
+  Thursday
+  Friday
+  Saturday
+  Sunday
+}
+
+enum Status {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
