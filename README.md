@@ -34,8 +34,6 @@ A comprehensive Node.js backend application for a salon booking system that inte
 
 ```
 backend/
-├── config/
-│   └── functionMap.js          # Vapi AI custom functions
 ├── controllers/                # Request handlers
 │   ├── appointment-controller.js
 │   ├── customer-controller.js

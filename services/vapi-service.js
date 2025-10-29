@@ -1,7 +1,6 @@
 const { VapiClient } = require("@vapi-ai/server-sdk");
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
-const vapiFunctions = require("../config/functionMap");
 
 class VapiService {
   constructor() {

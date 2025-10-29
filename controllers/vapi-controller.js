@@ -1,7 +1,6 @@
 const vapiService = require("../services/vapi-service");
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
-const vapiFunctions = require("../config/functionMap");
 
 class VapiController {
   // Your existing methods
@@ -74,8 +73,6 @@ class VapiController {
   // Enhanced webhook handler with function call support
   async handleWebhook(req, res) {
     console.log("@inside webhook");
-    console.log("Webhook body:", JSON.stringify(req.body, null, 2));
-
     try {
       const { type, call, message, functionCall, conversation, transcript } =
         req.body;
