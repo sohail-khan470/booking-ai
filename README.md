@@ -2,7 +2,7 @@
 
 A comprehensive Node.js backend application for a salon booking system that integrates with Vapi AI for automated voice-based appointment scheduling. The system provides RESTful APIs for managing customers, staff, services, appointments, and time slots, with real-time AI-powered phone call handling.
 
-## 🚀 Features
+## Features
 
 ### Core Functionality
 
@@ -20,7 +20,7 @@ A comprehensive Node.js backend application for a salon booking system that inte
 - **Webhook Handling**: Automatic processing of call events and function executions
 - **Intelligent Routing**: AI-powered customer service and appointment scheduling
 
-## 🏗️ Architecture
+## Architecture
 
 ### Technology Stack
 
@@ -60,11 +60,10 @@ backend/
 │   └── vapi-service.js
 ├── index.js                    # Application entry point
 ├── seed.js                     # Database seeding script
-├── registerVapiFunctions.js    # Vapi AI function registration
 └── package.json
 ```
 
-## 📊 Database Schema
+## Database Schema
 
 ### Core Entities
 
@@ -121,7 +120,7 @@ backend/
 - `status`: Call outcome
 - `appointmentId`: Linked appointment (optional)
 
-## 🔧 Installation & Setup
+## Installation & Setup
 
 ### Prerequisites
 
@@ -243,7 +242,7 @@ backend/
 - `GET /services` - Get services (for AI)
 - `GET /staff` - Get staff (for AI)
 
-## 🤖 Vapi AI Integration
+## Vapi AI Integration
 
 ### Custom Functions
 

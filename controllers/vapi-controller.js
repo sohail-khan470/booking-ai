@@ -1,189 +1,103 @@
-const vapiService = require("../services/vapi-service");
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const { VapiWebhookService } = require("../services/vapi-service");
 
-class VapiController {
-  // Your existing methods
-  async initiateBookingCall(req, res) {
-    try {
-      const { phoneNumber, customerName, customerEmail } = req.body;
+const vapiWebhookService = new VapiWebhookService();
 
-      const customerData = {
-        name: customerName,
-        email: customerEmail,
-        phoneNumber: phoneNumber,
-      };
-
-      const call = await vapiService.createBookingCall(
-        phoneNumber,
-        customerData
-      );
-
-      res.json({
-        success: true,
-        callId: call.id,
-        status: call.status,
-        message: "Booking call initiated successfully",
-      });
-    } catch (error) {
-      console.error("Error initiating booking call:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to initiate booking call",
-      });
-    }
-  }
-
-  async getCallStatus(req, res) {
-    try {
-      const { callId } = req.params;
-      const call = await vapiService.getCallDetails(callId);
-
-      res.json({
-        success: true,
-        call,
-      });
-    } catch (error) {
-      console.error("Error fetching call status:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to fetch call status",
-      });
-    }
-  }
-
-  async getCustomerCallHistory(req, res) {
-    try {
-      const { phoneNumber } = req.params;
-      const calls = await vapiService.getCustomerCalls(phoneNumber);
-
-      res.json({
-        success: true,
-        calls,
-      });
-    } catch (error) {
-      console.error("Error fetching call history:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to fetch call history",
-      });
-    }
-  }
-
-  // Enhanced webhook handler with function call support
+class VapiWebhookController {
   async handleWebhook(req, res) {
-    console.log("@inside webhook");
-    try {
-      const { type, call, message, functionCall, conversation, transcript } =
-        req.body;
+    console.log("=== INCOMING WEBHOOK REQUEST ===");
+    console.log("Headers:", req.headers);
+    console.log("Full request body:", JSON.stringify(req.body, null, 2));
+    console.log("================================");
 
-      // Handle different webhook formats (Vapi has multiple webhook types)
-      if (type === "function-call") {
-        // Handle real-time function execution
-        const result = await this.handleFunctionCall(
-          functionCall.name,
-          functionCall.parameters
-        );
-        return res.json(result);
-      }
-
-      if (type === "conversation-update" && conversation?.status === "ended") {
-        // Process completed call
-        await vapiService.processCompletedCall(req.body);
-        return res.json({ status: "ok" });
-      }
-
-      if (type === "call.ended" || type === "call.completed") {
-        // Your existing webhook format
-        await vapiService.processCompletedCall(call);
-      }
-
-      // Acknowledge webhook receipt
-      res.json({ received: true });
-    } catch (error) {
-      console.error("Error handling webhook:", error);
-      res.status(500).json({ error: "Webhook processing failed" });
-    }
-  }
-
-  // New method: Handle real-time function calls
-  async handleFunctionCall(functionName, parameters) {
-    try {
-      console.log(`Handling function call: ${functionName}`, parameters);
-
-      const functionConfig = vapiFunctions[functionName];
-      if (!functionConfig || !functionConfig.handler) {
-        throw new Error(`Function ${functionName} not found`);
-      }
-
-      const result = await functionConfig.handler(parameters);
-      console.log(` Function result:`, result);
-
-      return result;
-    } catch (error) {
-      console.error(` Function error:`, error);
-      return {
+    // Validate request method
+    if (req.method !== "POST") {
+      return res.status(405).json({
         success: false,
-        message: `Error executing ${functionName}: ${error.message}`,
-      };
+        message: "Method not allowed. Only POST requests are accepted.",
+      });
     }
-  }
 
-  // New method: Get available services
-  async getServices(req, res) {
+    // Validate request body exists
+    if (!req.body || Object.keys(req.body).length === 0) {
+      console.log("Empty request body received");
+      return res.status(400).json({
+        success: false,
+        message: "Invalid webhook data: Empty request body",
+      });
+    }
+
     try {
-      const services = await prisma.service.findMany({
-        select: {
-          serviceId: true,
-          serviceName: true,
-          description: true,
-          duration: true,
-          price: true,
-        },
-        orderBy: { serviceName: "asc" },
+      // Process based on the actual structure we're receiving
+      let webhookData = req.body;
+
+      // If Vapi sends the data in a 'message' field, extract it
+      if (req.body.message && typeof req.body.message === "object") {
+        webhookData = req.body.message;
+        console.log("Extracted data from message field");
+      }
+
+      // If it's a string, try to parse it
+      if (typeof req.body.message === "string") {
+        try {
+          webhookData = JSON.parse(req.body.message);
+          console.log("Parsed message string as JSON");
+        } catch (parseError) {
+          console.log("Message is a string but not JSON, using as transcript");
+          webhookData = { transcript: req.body.message };
+        }
+      }
+
+      console.log("Processing webhook data structure:", {
+        type: webhookData.type,
+        hasCall: !!webhookData.call,
+        hasTranscript: !!webhookData.transcript,
+        hasMessage: !!webhookData.message,
+        keys: Object.keys(webhookData),
       });
 
-      res.json({
+      // Generate a unique call ID if not provided
+      if (!webhookData.call) {
+        webhookData.call = {
+          id: `call-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        };
+        console.log("Generated call ID:", webhookData.call.id);
+      }
+
+      // Ensure transcript exists
+      if (!webhookData.transcript) {
+        webhookData.transcript = "No transcript provided in webhook";
+        console.log("Added default transcript");
+      }
+
+      // Process the webhook data
+      const result = await vapiWebhookService.processWebhook(webhookData);
+
+      console.log("Webhook processed successfully:", result);
+
+      return res.status(200).json({
         success: true,
-        services: services.map((service) => ({
-          ...service,
-          price: `$${service.price}`,
-          duration: `${service.duration} minutes`,
-        })),
+        message: "Webhook processed successfully",
+        data: result,
       });
     } catch (error) {
-      console.error("Error fetching services:", error);
-      res.status(500).json({
+      console.error("Webhook processing failed:", error);
+
+      return res.status(500).json({
         success: false,
-        message: "Failed to fetch services",
+        message: "Internal server error while processing webhook",
+        error: error.message,
       });
     }
   }
 
-  // New method: Get available staff
-  async getStaff(req, res) {
-    try {
-      const staff = await prisma.staff.findMany({
-        select: {
-          staffId: true,
-          name: true,
-          role: true,
-        },
-        orderBy: { name: "asc" },
-      });
-
-      res.json({
-        success: true,
-        staff,
-      });
-    } catch (error) {
-      console.error("Error fetching staff:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to fetch staff",
-      });
-    }
+  // Health check endpoint
+  async healthCheck(req, res) {
+    return res.status(200).json({
+      success: true,
+      message: "Vapi webhook endpoint is healthy and ready to receive calls",
+      timestamp: new Date().toISOString(),
+    });
   }
 }
 
-module.exports = new VapiController();
+module.exports = { VapiWebhookController };
