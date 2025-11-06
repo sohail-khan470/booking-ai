@@ -70,6 +70,8 @@ CREATE TABLE `Slot` (
     `endTime` DATETIME(3) NOT NULL,
     `isBooked` BOOLEAN NOT NULL DEFAULT false,
 
+    INDEX `Slot_staffId_date_idx`(`staffId`, `date`),
+    UNIQUE INDEX `Slot_staffId_date_startTime_key`(`staffId`, `date`, `startTime`),
     PRIMARY KEY (`slotId`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

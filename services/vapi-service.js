@@ -4,10 +4,11 @@ const prisma = new PrismaClient();
 
 class VapiWebhookService {
   // Extract customer information from transcript
-  extractCustomerInfo(transcript) {
+  extractCustomerInfo(transcript, webhookData) {
     console.log("Extracting customer info from transcript...");
+    console.log("Transcript:", transcript);
 
-    // Default values
+    // Default values (will be used only if no data is found)
     let customerInfo = {
       name: "Unknown Customer",
       phoneNumber: "0000000000",
@@ -15,50 +16,35 @@ class VapiWebhookService {
     };
 
     if (!transcript || transcript === "No transcript provided in webhook") {
+      console.log("No transcript available, using defaults");
       return customerInfo;
     }
 
-    const lines = transcript.split("\n");
-
-    for (const line of lines) {
-      // Extract name patterns
-      if (
-        line.includes("name is") &&
-        customerInfo.name === "Unknown Customer"
-      ) {
-        const nameMatch =
-          line.match(/name is\s+([A-Za-z\s]+)\.?/i) ||
-          line.match(/([A-Za-z]+\s+[A-Za-z]+)(?=\s+phone|$|\.)/i);
-        if (nameMatch) {
-          customerInfo.name = nameMatch[1].trim();
-          console.log("Found name:", customerInfo.name);
-        }
-      }
-
-      // Extract phone number patterns
-      if (
-        (line.includes("phone") || line.includes("number")) &&
-        customerInfo.phoneNumber === "0000000000"
-      ) {
-        const phoneMatch = line.match(/(\d{6,})/);
-        if (phoneMatch) {
-          customerInfo.phoneNumber = phoneMatch[1];
-          console.log("Found phone:", customerInfo.phoneNumber);
-        }
-      }
-
-      // Extract email patterns
-      if (line.includes("@") && customerInfo.email === "unknown@example.com") {
-        const emailMatch = line.match(
-          /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
-        );
-        if (emailMatch) {
-          customerInfo.email = emailMatch[1];
-          console.log("Found email:", customerInfo.email);
-        }
-      }
+    // FIRST: Check if we have structured data from Vapi tool calls
+    const toolCallData = this.extractFromToolCalls(webhookData);
+    if (toolCallData.name && toolCallData.name !== "Unknown Customer") {
+      console.log("Using data from tool calls:", toolCallData);
+      return { ...customerInfo, ...toolCallData };
     }
 
+    // SECOND: Try to extract from transcript with better patterns
+    const extractedData = this.extractFromTranscript(transcript);
+
+    // Only override defaults if we found actual data
+    if (extractedData.name && extractedData.name !== "Unknown Customer") {
+      customerInfo.name = extractedData.name;
+    }
+    if (
+      extractedData.phoneNumber &&
+      extractedData.phoneNumber !== "0000000000"
+    ) {
+      customerInfo.phoneNumber = extractedData.phoneNumber;
+    }
+    if (extractedData.email && extractedData.email !== "unknown@example.com") {
+      customerInfo.email = extractedData.email;
+    }
+
+    console.log("Final customer info:", customerInfo);
     return customerInfo;
   }
 
@@ -94,14 +80,18 @@ class VapiWebhookService {
   }
 
   // Extract appointment date from various sources
+  // Extract appointment date from various sources - IMPROVED
   extractAppointmentDate(webhookData) {
     console.log("Extracting appointment date...");
 
-    // Try to get from tool calls first
+    // Try to get from tool calls first - IMPROVED VERSION
     const messages =
       webhookData.artifact?.messages || webhookData.messages || [];
 
+    console.log("Searching through messages for tool calls:", messages.length);
+
     for (const message of messages) {
+      // Check for tool calls in the message
       if (message.toolCalls && Array.isArray(message.toolCalls)) {
         for (const toolCall of message.toolCalls) {
           if (
@@ -112,7 +102,10 @@ class VapiWebhookService {
               const args = JSON.parse(toolCall.function.arguments);
               if (args.date) {
                 console.log("Found date in tool call:", args.date);
-                return new Date(args.date);
+                const date = new Date(args.date);
+                if (!isNaN(date.getTime())) {
+                  return date;
+                }
               }
             } catch (error) {
               console.error("Error parsing tool call arguments:", error);
@@ -120,13 +113,48 @@ class VapiWebhookService {
           }
         }
       }
+
+      // Also check for functionCall (different structure)
+      if (
+        message.functionCall &&
+        message.functionCall.name === "book_appointment"
+      ) {
+        try {
+          const args = JSON.parse(message.functionCall.arguments);
+          if (args.date) {
+            console.log("Found date in functionCall:", args.date);
+            const date = new Date(args.date);
+            if (!isNaN(date.getTime())) {
+              return date;
+            }
+          }
+        } catch (error) {
+          console.error("Error parsing functionCall arguments:", error);
+        }
+      }
     }
 
-    // Fallback to transcript analysis
-    const transcript = webhookData.transcript || "";
-    let appointmentDate = new Date();
+    // Fallback: Check if there's direct tool call data in the webhook
+    if (
+      webhookData.toolCall &&
+      webhookData.toolCall.functionName === "book_appointment"
+    ) {
+      try {
+        const args = JSON.parse(webhookData.toolCall.arguments);
+        if (args.date) {
+          console.log("Found date in direct tool call:", args.date);
+          const date = new Date(args.date);
+          if (!isNaN(date.getTime())) {
+            return date;
+          }
+        }
+      } catch (error) {
+        console.error("Error parsing direct tool call arguments:", error);
+      }
+    }
 
-    // Default to tomorrow at 3 PM
+    // Final fallback to default date
+    let appointmentDate = new Date();
     appointmentDate.setDate(appointmentDate.getDate() + 1);
     appointmentDate.setHours(15, 0, 0, 0);
 
@@ -270,6 +298,8 @@ class VapiWebhookService {
   }
 
   // Create call log with duplicate handling
+  // In createCallLog method, if schema change isn't possible:
+  // Create call log with duplicate handling - IMPROVED
   async createCallLog(callData) {
     try {
       // First, check if call log already exists
@@ -279,12 +309,15 @@ class VapiWebhookService {
         },
       });
 
+      // Clean the transcript if it's too long (though @db.Text should handle it)
+      const cleanTranscript = callData.transcript || "No transcript available";
+
       if (existingCallLog) {
         console.log("Call log already exists, updating:", callData.callId);
         return await prisma.callLog.update({
           where: { callId: callData.callId },
           data: {
-            transcript: callData.transcript,
+            transcript: cleanTranscript,
             recordingUrl: callData.recordingUrl,
             cost: callData.cost,
             status: callData.status,
@@ -294,7 +327,10 @@ class VapiWebhookService {
       } else {
         console.log("Creating new call log:", callData.callId);
         return await prisma.callLog.create({
-          data: callData,
+          data: {
+            ...callData,
+            transcript: cleanTranscript,
+          },
         });
       }
     } catch (error) {
@@ -304,15 +340,26 @@ class VapiWebhookService {
   }
 
   // Create or update slot
+  // Create or update slot - FIXED VERSION
   async createOrUpdateSlot(staffId, appointmentDate, endTime) {
     try {
-      // Format dates properly for the unique constraint
-      const slotDate = new Date(appointmentDate.toDateString());
+      // Format dates properly - FIXED
+      const slotDate = new Date(appointmentDate);
+      slotDate.setHours(0, 0, 0, 0); // Set to start of day
+
       const slotStartTime = new Date(appointmentDate);
+
+      console.log("Creating/updating slot with:", {
+        staffId,
+        date: slotDate,
+        startTime: slotStartTime,
+        endTime,
+      });
 
       await prisma.slot.upsert({
         where: {
           staffId_date_startTime: {
+            // This now matches the @@unique constraint
             staffId: staffId,
             date: slotDate,
             startTime: slotStartTime,
@@ -339,6 +386,8 @@ class VapiWebhookService {
   }
 
   // Main method to process webhook
+  // Main method to process webhook - IMPROVED VERSION
+  // In your processWebhook method, update the data extraction call:
   async processWebhook(webhookData) {
     try {
       console.log("=== STARTING WEBHOOK PROCESSING ===");
@@ -347,14 +396,13 @@ class VapiWebhookService {
 
       const { transcript, call, cost, recordingUrl } = webhookData;
 
-      // Generate unique call ID if not provided
       const callId =
         call?.id ||
         `call-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       console.log("Using call ID:", callId);
 
-      // Extract data from webhook
-      const customerInfo = this.extractCustomerInfo(transcript);
+      // IMPROVED: Pass the entire webhookData to extractCustomerInfo
+      const customerInfo = this.extractCustomerInfo(transcript, webhookData);
       const serviceType = this.extractServiceType(transcript);
       const appointmentDate = this.extractAppointmentDate(webhookData);
 
@@ -364,7 +412,34 @@ class VapiWebhookService {
         date: appointmentDate.toISOString(),
       });
 
-      // Database operations
+      // Only create appointment if we have real customer data
+      if (customerInfo.name === "Unknown Customer") {
+        console.log(
+          "No customer data found, creating minimal record for tracking"
+        );
+
+        // Create a basic call log without appointment
+        const callLog = await this.createCallLog({
+          callId: callId,
+          phoneNumber: customerInfo.phoneNumber,
+          transcript: transcript || "No transcript available",
+          recordingUrl: recordingUrl,
+          cost: cost,
+          status: "completed-no-booking",
+          appointmentId: null,
+        });
+
+        return {
+          success: true,
+          callLogId: callLog.callLogId,
+          customer: customerInfo.name,
+          service: "No service booked",
+          appointmentDate: null,
+          note: "Call completed but no appointment data collected",
+        };
+      }
+
+      // Rest of your existing code for creating appointments...
       const customer = await this.findOrCreateCustomer(customerInfo);
       const service = await this.findService(serviceType);
       const staff = await this.findAvailableStaff(appointmentDate);
@@ -382,7 +457,7 @@ class VapiWebhookService {
 
       console.log("Appointment created:", appointment.appointmentId);
 
-      // Create call log with duplicate handling
+      // Create call log
       const callLog = await this.createCallLog({
         callId: callId,
         phoneNumber: customer.phoneNumber,
@@ -395,7 +470,7 @@ class VapiWebhookService {
 
       console.log("Call log created/updated:", callLog.callLogId);
 
-      // Create or update slot (non-blocking)
+      // Create or update slot
       const endTime = new Date(
         appointmentDate.getTime() + service.duration * 60000
       );
@@ -415,22 +490,150 @@ class VapiWebhookService {
       console.error("=== WEBHOOK PROCESSING FAILED ===");
       console.error("Error:", error);
 
-      // Create failed call log for tracking (with unique ID)
-      if (webhookData.call?.id) {
-        try {
-          await this.createCallLog({
-            callId: webhookData.call.id,
-            status: "failed",
-            transcript: webhookData.transcript || "No transcript",
-            cost: webhookData.cost,
-          });
-        } catch (logError) {
-          console.error("Failed to create error call log:", logError);
+      // Error handling...
+      throw new Error(`Failed to process webhook: ${error.message}`);
+    }
+  }
+
+  // In your extractFromToolCalls method, add phone number cleaning:
+  extractFromToolCalls(webhookData) {
+    console.log("Checking for tool call data...");
+
+    const toolCallData = {
+      name: "Unknown Customer",
+      phoneNumber: "0000000000",
+      email: "unknown@example.com",
+    };
+
+    try {
+      const messages =
+        webhookData.artifact?.messages || webhookData.messages || [];
+
+      for (const message of messages) {
+        if (message.toolCalls && Array.isArray(message.toolCalls)) {
+          for (const toolCall of message.toolCalls) {
+            if (
+              toolCall.function &&
+              toolCall.function.name === "book_appointment"
+            ) {
+              const args = JSON.parse(toolCall.function.arguments);
+              console.log("Found tool call arguments:", args);
+
+              if (args.name) toolCallData.name = args.name;
+              if (args.email) toolCallData.email = args.email;
+
+              // IMPROVED PHONE NUMBER HANDLING
+              if (args.phoneNumber) {
+                // Clean the phone number - take only digits and limit to reasonable length
+                let phone = args.phoneNumber.replace(/\D/g, ""); // Remove non-digits
+                if (phone.length > 15) {
+                  phone = phone.substring(0, 15); // Limit to 15 digits max
+                }
+                toolCallData.phoneNumber = phone || "0000000000";
+              }
+
+              return toolCallData;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error extracting from tool calls:", error);
+    }
+
+    return toolCallData;
+  }
+
+  extractFromTranscript(transcript) {
+    const extracted = {
+      name: "Unknown Customer",
+      phoneNumber: "0000000000",
+      email: "unknown@example.com",
+    };
+
+    const lines = transcript.split("\n");
+
+    for (const line of lines) {
+      const lowerLine = line.toLowerCase();
+
+      // Extract name - IMPROVED PATTERNS
+      if (extracted.name === "Unknown Customer") {
+        // Patterns: "my name is John", "I'm John", "this is John", "John Smith"
+        const namePatterns = [
+          /(?:my name is|i'm|this is|it's|call me)[\s,]+([a-z][a-z\s]{1,30})(?:\.|\s|$)/i,
+          /(?:name['\s]s?[\s:]+)([a-z][a-z\s]{1,30})(?:\.|\s|$)/i,
+          /^([a-z]+[\s]+[a-z]+)(?:\s|$)/i, // First line with two words
+        ];
+
+        for (const pattern of namePatterns) {
+          const match = line.match(pattern);
+          if (match && match[1]) {
+            const name = match[1].trim();
+            if (
+              name.length > 1 &&
+              !name.includes("ai") &&
+              !name.includes("assistant")
+            ) {
+              extracted.name = this.formatName(name);
+              console.log("Found name:", extracted.name);
+              break;
+            }
+          }
         }
       }
 
-      throw new Error(`Failed to process webhook: ${error.message}`);
+      // Extract phone number - IMPROVED PATTERNS
+      if (extracted.phoneNumber === "0000000000") {
+        // Match various phone formats
+        const phonePatterns = [
+          /\b(\d{3}[-.]?\d{3}[-.]?\d{4})\b/,
+          /\b(\d{10})\b/,
+          /(?:phone|number|call me at)[\s:]*([0-9\s\-\(\)]{10,15})/i,
+        ];
+
+        for (const pattern of phonePatterns) {
+          const match = line.match(pattern);
+          if (match && match[1]) {
+            let phone = match[1].replace(/[^\d]/g, "");
+            if (phone.length >= 10) {
+              extracted.phoneNumber = phone.substring(0, 10); // Take first 10 digits
+              console.log("Found phone:", extracted.phoneNumber);
+              break;
+            }
+          }
+        }
+      }
+
+      // Extract email - IMPROVED PATTERNS
+      if (extracted.email === "unknown@example.com") {
+        const emailMatch = line.match(
+          /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
+        );
+        if (emailMatch) {
+          extracted.email = emailMatch[1].toLowerCase();
+          console.log("Found email:", extracted.email);
+        } else if (lowerLine.includes("email") || lowerLine.includes("@")) {
+          // Look for email patterns without @ in the same line
+          const emailHint = line.match(
+            /([a-zA-Z0-9]+)[\s]*(?:at|@)[\s]*([a-zA-Z0-9]+)[\s]*(?:dot|\.)[\s]*([a-zA-Z]{2,})/i
+          );
+          if (emailHint) {
+            extracted.email =
+              `${emailHint[1]}@${emailHint[2]}.${emailHint[3]}`.toLowerCase();
+            console.log("Constructed email:", extracted.email);
+          }
+        }
+      }
     }
+
+    return extracted;
+  }
+  formatName(name) {
+    return name
+      .split(" ")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(" ")
+      .trim();
   }
 }
 

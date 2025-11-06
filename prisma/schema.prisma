@@ -71,13 +71,16 @@ model Slot {
   endTime   DateTime
   isBooked  Boolean  @default(false)
   staff     Staff    @relation(fields: [staffId], references: [staffId])
+
+  @@unique([staffId, date, startTime]) // Add this unique constraint
+  @@index([staffId, date])
 }
 
 model CallLog {
   callLogId     Int      @id @default(autoincrement())
   callId        String   @unique
   phoneNumber   String?
-  transcript    String?
+  transcript    String?  @db.Text // CHANGE THIS LINE
   recordingUrl  String?
   cost          Float?
   status        String
