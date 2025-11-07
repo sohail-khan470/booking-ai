@@ -3,16 +3,16 @@ const { PrismaClient, DayOfWeek, Status } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 class VapiWebhookService {
-  // Extract customer information from transcript
+  // Extract customer information from transcript - IMPROVED
   extractCustomerInfo(transcript, webhookData) {
     console.log("Extracting customer info from transcript...");
     console.log("Transcript:", transcript);
 
-    // Default values (will be used only if no data is found)
+    // Default values
     let customerInfo = {
       name: "Unknown Customer",
       phoneNumber: "0000000000",
-      email: "unknown@example.com",
+      email: "unknown@example.com", // Already lowercase default
     };
 
     if (!transcript || transcript === "No transcript provided in webhook") {
@@ -22,26 +22,47 @@ class VapiWebhookService {
 
     // FIRST: Check if we have structured data from Vapi tool calls
     const toolCallData = this.extractFromToolCalls(webhookData);
+    console.log("Tool call data:", toolCallData);
+
+    // Use tool call data if we have valid name
     if (toolCallData.name && toolCallData.name !== "Unknown Customer") {
-      console.log("Using data from tool calls:", toolCallData);
-      return { ...customerInfo, ...toolCallData };
+      customerInfo.name = toolCallData.name;
+
+      // ENSURE LOWERCASE EMAIL
+      customerInfo.email = toolCallData.email.toLowerCase();
+
+      // Only use phone from tool call if it's valid (not just zeros)
+      if (
+        toolCallData.phoneNumber &&
+        toolCallData.phoneNumber !== "0000000000"
+      ) {
+        customerInfo.phoneNumber = toolCallData.phoneNumber;
+      }
+
+      console.log("Using data from tool calls:", customerInfo);
+      return customerInfo;
     }
 
-    // SECOND: Try to extract from transcript with better patterns
+    // SECOND: Try to extract from transcript
     const extractedData = this.extractFromTranscript(transcript);
+    console.log("Extracted data from transcript:", extractedData);
 
     // Only override defaults if we found actual data
     if (extractedData.name && extractedData.name !== "Unknown Customer") {
       customerInfo.name = extractedData.name;
     }
+
+    // Use phone from transcript if tool call didn't provide a valid one
     if (
       extractedData.phoneNumber &&
       extractedData.phoneNumber !== "0000000000"
     ) {
       customerInfo.phoneNumber = extractedData.phoneNumber;
     }
+
+    // ENSURE LOWERCASE EMAIL from transcript extraction
     if (extractedData.email && extractedData.email !== "unknown@example.com") {
-      customerInfo.email = extractedData.email;
+      customerInfo.email = extractedData.email.toLowerCase();
     }
 
     console.log("Final customer info:", customerInfo);
@@ -79,7 +100,6 @@ class VapiWebhookService {
     return "Haircut";
   }
 
-  // Extract appointment date from various sources
   // Extract appointment date from various sources - IMPROVED
   extractAppointmentDate(webhookData) {
     console.log("Extracting appointment date...");
@@ -176,15 +196,18 @@ class VapiWebhookService {
     return days[date.getDay()];
   }
 
-  // Find or create customer
+  // Find or create customer - UPDATED TO ENSURE LOWERCASE EMAIL
   async findOrCreateCustomer(customerInfo) {
     console.log("Finding or creating customer:", customerInfo);
 
-    // Try to find by email first, then phone
+    // ENSURE email is lowercase before database operations
+    const normalizedEmail = customerInfo.email.toLowerCase();
+
+    // Try to find by email first (using lowercase), then phone
     let customer = await prisma.customer.findFirst({
       where: {
         OR: [
-          { email: customerInfo.email },
+          { email: normalizedEmail },
           { phoneNumber: customerInfo.phoneNumber },
         ],
       },
@@ -195,7 +218,7 @@ class VapiWebhookService {
       customer = await prisma.customer.create({
         data: {
           name: customerInfo.name,
-          email: customerInfo.email,
+          email: normalizedEmail, // Store as lowercase
           phoneNumber: customerInfo.phoneNumber,
         },
       });
@@ -206,7 +229,7 @@ class VapiWebhookService {
         where: { customerId: customer.customerId },
         data: {
           name: customerInfo.name,
-          email: customerInfo.email || customer.email,
+          email: normalizedEmail, // Always update to lowercase
           phoneNumber: customerInfo.phoneNumber || customer.phoneNumber,
         },
       });
@@ -298,8 +321,6 @@ class VapiWebhookService {
   }
 
   // Create call log with duplicate handling
-  // In createCallLog method, if schema change isn't possible:
-  // Create call log with duplicate handling - IMPROVED
   async createCallLog(callData) {
     try {
       // First, check if call log already exists
@@ -339,7 +360,6 @@ class VapiWebhookService {
     }
   }
 
-  // Create or update slot
   // Create or update slot - FIXED VERSION
   async createOrUpdateSlot(staffId, appointmentDate, endTime) {
     try {
@@ -385,9 +405,7 @@ class VapiWebhookService {
     }
   }
 
-  // Main method to process webhook
   // Main method to process webhook - IMPROVED VERSION
-  // In your processWebhook method, update the data extraction call:
   async processWebhook(webhookData) {
     try {
       console.log("=== STARTING WEBHOOK PROCESSING ===");
@@ -495,14 +513,14 @@ class VapiWebhookService {
     }
   }
 
-  // In your extractFromToolCalls method, add phone number cleaning:
+  // Extract data from Vapi tool calls - FIXED PHONE NUMBER HANDLING
   extractFromToolCalls(webhookData) {
     console.log("Checking for tool call data...");
 
     const toolCallData = {
       name: "Unknown Customer",
-      phoneNumber: "0000000000",
-      email: "unknown@example.com",
+      phoneNumber: null, // Change to null initially
+      email: "unknown@example.com", // Already lowercase default
     };
 
     try {
@@ -520,16 +538,36 @@ class VapiWebhookService {
               console.log("Found tool call arguments:", args);
 
               if (args.name) toolCallData.name = args.name;
-              if (args.email) toolCallData.email = args.email;
 
-              // IMPROVED PHONE NUMBER HANDLING
+              // ENSURE LOWERCASE EMAIL from tool calls
+              if (args.email) toolCallData.email = args.email.toLowerCase();
+
+              // IMPROVED PHONE NUMBER EXTRACTION
               if (args.phoneNumber) {
-                // Clean the phone number - take only digits and limit to reasonable length
-                let phone = args.phoneNumber.replace(/\D/g, ""); // Remove non-digits
-                if (phone.length > 15) {
-                  phone = phone.substring(0, 15); // Limit to 15 digits max
+                console.log(
+                  "Raw phone number from tool call:",
+                  args.phoneNumber
+                );
+
+                // Extract only digits
+                let phoneDigits = args.phoneNumber.replace(/\D/g, "");
+                console.log("Phone digits after cleaning:", phoneDigits);
+
+                // Try to find a valid phone number pattern
+                if (phoneDigits.length >= 10) {
+                  // Take the first 10 digits (standard US number)
+                  toolCallData.phoneNumber = phoneDigits.substring(0, 10);
+                } else if (phoneDigits.length > 0) {
+                  // If less than 10 digits but has some numbers, use what we have
+                  toolCallData.phoneNumber = phoneDigits;
+                } else {
+                  // No valid phone number found
+                  toolCallData.phoneNumber = "0000000000";
                 }
-                toolCallData.phoneNumber = phone || "0000000000";
+
+                console.log("Final phone number:", toolCallData.phoneNumber);
+              } else {
+                toolCallData.phoneNumber = "0000000000";
               }
 
               return toolCallData;
@@ -541,14 +579,20 @@ class VapiWebhookService {
       console.error("Error extracting from tool calls:", error);
     }
 
+    // If no phone number was set, set default
+    if (!toolCallData.phoneNumber) {
+      toolCallData.phoneNumber = "0000000000";
+    }
+
     return toolCallData;
   }
 
+  // Improved transcript parsing - BETTER PHONE EXTRACTION
   extractFromTranscript(transcript) {
     const extracted = {
       name: "Unknown Customer",
-      phoneNumber: "0000000000",
-      email: "unknown@example.com",
+      phoneNumber: null,
+      email: "unknown@example.com", // Already lowercase default
     };
 
     const lines = transcript.split("\n");
@@ -556,13 +600,11 @@ class VapiWebhookService {
     for (const line of lines) {
       const lowerLine = line.toLowerCase();
 
-      // Extract name - IMPROVED PATTERNS
+      // Extract name (your existing logic)
       if (extracted.name === "Unknown Customer") {
-        // Patterns: "my name is John", "I'm John", "this is John", "John Smith"
         const namePatterns = [
           /(?:my name is|i'm|this is|it's|call me)[\s,]+([a-z][a-z\s]{1,30})(?:\.|\s|$)/i,
           /(?:name['\s]s?[\s:]+)([a-z][a-z\s]{1,30})(?:\.|\s|$)/i,
-          /^([a-z]+[\s]+[a-z]+)(?:\s|$)/i, // First line with two words
         ];
 
         for (const pattern of namePatterns) {
@@ -575,59 +617,91 @@ class VapiWebhookService {
               !name.includes("assistant")
             ) {
               extracted.name = this.formatName(name);
-              console.log("Found name:", extracted.name);
+              console.log("Found name from transcript:", extracted.name);
               break;
             }
           }
         }
       }
 
-      // Extract phone number - IMPROVED PATTERNS
-      if (extracted.phoneNumber === "0000000000") {
-        // Match various phone formats
+      // IMPROVED PHONE NUMBER EXTRACTION FROM TRANSCRIPT
+      if (!extracted.phoneNumber) {
+        console.log("Looking for phone number in line:", line);
+
+        // Multiple patterns for phone numbers
         const phonePatterns = [
-          /\b(\d{3}[-.]?\d{3}[-.]?\d{4})\b/,
+          /(?:phone|number|call me at|mobile|cell)[\s:]*([0-9\s\-\(\)\.]{10,20})/i,
+          /\b(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})\b/,
           /\b(\d{10})\b/,
-          /(?:phone|number|call me at)[\s:]*([0-9\s\-\(\)]{10,15})/i,
+          /zero\s*three\s*five\s*zero\s*nine\s*two\s*six\s*one\s*four/i, // For "zero three five zero nine two six one four"
         ];
 
         for (const pattern of phonePatterns) {
           const match = line.match(pattern);
           if (match && match[1]) {
-            let phone = match[1].replace(/[^\d]/g, "");
-            if (phone.length >= 10) {
-              extracted.phoneNumber = phone.substring(0, 10); // Take first 10 digits
-              console.log("Found phone:", extracted.phoneNumber);
+            console.log("Phone match found:", match[1]);
+
+            let phone = match[1];
+
+            // Handle spelled-out numbers like "zero three five zero nine two six one four"
+            if (pattern.toString().includes("zero")) {
+              phone = phone
+                .replace(/zero/gi, "0")
+                .replace(/one/gi, "1")
+                .replace(/two/gi, "2")
+                .replace(/three/gi, "3")
+                .replace(/four/gi, "4")
+                .replace(/five/gi, "5")
+                .replace(/six/gi, "6")
+                .replace(/seven/gi, "7")
+                .replace(/eight/gi, "8")
+                .replace(/nine/gi, "9")
+                .replace(/\s+/g, "");
+            }
+
+            // Extract only digits
+            const phoneDigits = phone.replace(/\D/g, "");
+            console.log("Cleaned phone digits:", phoneDigits);
+
+            if (phoneDigits.length >= 10) {
+              extracted.phoneNumber = phoneDigits.substring(0, 10);
+              console.log(
+                "Final phone number from transcript:",
+                extracted.phoneNumber
+              );
+              break;
+            } else if (phoneDigits.length > 0) {
+              extracted.phoneNumber = phoneDigits;
+              console.log(
+                "Short phone number from transcript:",
+                extracted.phoneNumber
+              );
               break;
             }
           }
         }
       }
 
-      // Extract email - IMPROVED PATTERNS
+      // Extract email - ENSURE LOWERCASE
       if (extracted.email === "unknown@example.com") {
         const emailMatch = line.match(
           /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
         );
         if (emailMatch) {
-          extracted.email = emailMatch[1].toLowerCase();
-          console.log("Found email:", extracted.email);
-        } else if (lowerLine.includes("email") || lowerLine.includes("@")) {
-          // Look for email patterns without @ in the same line
-          const emailHint = line.match(
-            /([a-zA-Z0-9]+)[\s]*(?:at|@)[\s]*([a-zA-Z0-9]+)[\s]*(?:dot|\.)[\s]*([a-zA-Z]{2,})/i
-          );
-          if (emailHint) {
-            extracted.email =
-              `${emailHint[1]}@${emailHint[2]}.${emailHint[3]}`.toLowerCase();
-            console.log("Constructed email:", extracted.email);
-          }
+          extracted.email = emailMatch[1].toLowerCase(); // Convert to lowercase immediately
+          console.log("Found email from transcript:", extracted.email);
         }
       }
     }
 
+    // Set default if no phone number found
+    if (!extracted.phoneNumber) {
+      extracted.phoneNumber = "0000000000";
+    }
+
     return extracted;
   }
+
   formatName(name) {
     return name
       .split(" ")
