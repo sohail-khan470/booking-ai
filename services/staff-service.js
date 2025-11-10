@@ -18,8 +18,6 @@ class StaffService {
       const staff = await prisma.staff.findMany({
         include: {
           schedules: true,
-          appointments: true,
-          slots: true,
         },
       });
       return staff;

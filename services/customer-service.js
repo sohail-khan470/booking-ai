@@ -16,6 +16,8 @@ class CustomerService {
 
   // Get all customers
   async getAllCustomers() {
+    console.log("@A::Console");
+
     try {
       const customers = await prisma.customer.findMany({
         include: {
