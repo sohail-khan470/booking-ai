@@ -10,6 +10,7 @@ const {
   staffRoutes,
   customerRoutes,
   vapiRoutes,
+  authRoutes,
 } = require("./routes");
 const app = express();
 const PORT = process.env.PORT || 3100;
@@ -20,6 +21,7 @@ app.use(cors());
 
 /** routes */
 
+app.use("/api/auth", authRoutes);
 app.use("/api/vapi", vapiRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/services", serviceCatalogRoutes);

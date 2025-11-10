@@ -5,4 +5,5 @@ module.exports = {
   slotRoutes: require("./slot-routes"),
   staffRoutes: require("./staff-routes"),
   vapiRoutes: require("./vapi-routes"),
+  authRoutes: require("./auth-routes"),
 };
